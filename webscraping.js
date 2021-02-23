@@ -3,21 +3,21 @@ var rl = require('readline')
 var prompts = rl.createInterface(process.stdin, process.stdout);
 const fs = require('fs').promises;
 
-var validResults = 1285;
+var validResults = 1285; // used for indexing when writing to file with already (in this case) 1285 LOC
 
 (async () => {
-
+    //Launch new headless(for perfomance gains) Chromium Browser instance and Cache enabled (to open new tabs per listing which are already configured)
     const browser = await puppeteer.launch({
         executablePath: './chromium/chrome.exe',
         headless:false,
         product:'chrome',
         userDataDir: './cache'
     });
-    const page = (await browser.pages())[0];
-    await page.setViewport({width:1920, height:1080});
-    await page.goto("https://www.immotop.lu/de/search/");   
+    const page = (await browser.pages())[0]; //jump to first tab
+    await page.setViewport({width:1920, height:1080}); // Browser resolution(only useful when headless disabled)
+    await page.goto("https://www.immotop.lu/de/search/");
     scrapeProduct();
-
+//at the bottom of the page, read the last index of the pagination indices to figure out how many result pages can be opened
 async function getAmountSites(page){
     var amountPages = 1
     try {
@@ -38,23 +38,28 @@ async function getAmountSites(page){
         return amountPages;
     }
 }
+// Scrape the two formats of results using XPaths, which are elements of the XML Listings of HTML objects. These are iterable with the listing variable.
 async function scrapeProduct() {
     var resultNumber = 1;
     var page = (await browser.pages())[0];
     var o = {};
     for(var year = 2001; year <= 2020; year++) {
-        await page.$eval('#search_form > div.filt-but-block > button.button-l3.filter-pan', el => el.click());
-        await page.$eval("#year_build", (el, yearFromNode) => (el.value = "" + yearFromNode), year );
-        await page.$eval('#search_form > div.filt-but-block > button.button-l3.filter-pan', el => el.click());
-        await page.click("#search_form > div.filt-but-block > button:nth-child(3)")
+        //to get the age of the building, we have to select the input box for filtering and type in the year we want, then iterate through results
+        await page.$eval('#search_form > div.filt-but-block > button.button-l3.filter-pan', el => el.click());  //Left-Click on Filter Panel Open
+        await page.$eval("#year_build", (el, yearFromNode) => (el.value = "" + yearFromNode), year ); // Translate .js-context code to puppeteer-context code
+        await page.$eval('#search_form > div.filt-but-block > button.button-l3.filter-pan', el => el.click()); //Left-Click on Filter Panel Open to close again
+        await page.click("#search_form > div.filt-but-block > button:nth-child(3)") //Left-Click on Search
         await page.waitForNavigation();
         const amountPages = await getAmountSites(page);
         console.log("Year is " + year)
+        //for every page of results
         for(i = 1; i<= amountPages; i++){
             const nextUrl = "https://www.immotop.lu/de/search" + "/index" + i + ".html";
             await page.goto(nextUrl);
-
+            //for every listing
             for(listing = 5; listing <= 21; listing++){
+                
+                //most common format of listing
 
                 const titleAddress = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div[2]/p/a" //CONTAINS TITLE AND LINK 
                 const priceTagAddress = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div[2]/div[1]/div[1]/nobr/text()" //CONTAINS PRICE
@@ -64,7 +69,7 @@ async function scrapeProduct() {
                 const garageAddress = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div[2]/div[1]/div[5]/nobr"
                 const gardenAddress = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div[2]/div[1]/div[6]/i"
 
-                // SOME TOP ARTICLES
+                // SOME TOP ARTICLES(different format and XML structure)
 
                 const titleAddressB = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div/div/div[2]/p/a"
                 const priceTagAddressB = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div/div/div[2]/div[1]/div[1]/nobr"
@@ -73,7 +78,9 @@ async function scrapeProduct() {
                 const bathroomsAddressB = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div/div/div[2]/div[1]/div[4]/nobr"
                 const garageAddressB = "/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div/div/div[2]/div[1]/div[5]/nobr"
                 const gardenAddressB ="/html/body/div[1]/div[3]/div[1]/div[1]/div[1]/div[" + listing + "]/div/div/div/div[2]/div[1]/div[6]/i"
-
+                
+                //Try to capture the elements which the first format refer to
+                
                 const [el1] = await page.$x(titleAddress);
                 const [el2] = await page.$x(priceTagAddress);
                 const [el3] = await page.$x(spaceAddress);
@@ -81,12 +88,13 @@ async function scrapeProduct() {
                 const [el5] = await page.$x(bathroomsAddress);
                 const [el6] = await page.$x(garageAddress);
                 const [el7] = await page.$x(gardenAddress);
-
+                
+                //garden has no value, it is merely indicated by the presence of an icon, if icon detected => garden = true
                 var hasGarden = false
                 if(typeof el7 !== 'undefined'){
                     hasGarden = true
                 }
-
+                // if all the other elements are there, we convert to json, do some formatting and save by pushing to data array
                 if(typeof el1 !== 'undefined' && typeof el2 !== 'undefined' && typeof el3 !== 'undefined' && typeof el4 !== 'undefined' && typeof el5 !== 'undefined' && typeof el6 !== 'undefined'){
 
                     const linkProperty = await el1.getProperty('href');
@@ -131,6 +139,7 @@ async function scrapeProduct() {
                 }
                 else {
                     // TOP ANNONCES
+                    // code jumps here if the other format is being viewed
                     const [el1b] = await page.$x(titleAddressB);
                     const [el2b] = await page.$x(priceTagAddressB);
                     const [el3b] = await page.$x(spaceAddressB);
@@ -202,7 +211,7 @@ async function scrapeProduct() {
     //await browser.close();
 }
 
-
+// Read Country from title of listing
 async function getTypeCityCountry(title){
     var land
     var typImmobilie = "undefined"
